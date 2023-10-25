@@ -1,27 +1,40 @@
+
+# setup -------------------------------------------------------------------
+
+pacman::p_load(tidyverse,
+               lme4)
+
 # GLMM --------------------------------------------------------------------
 
 # data
 set.seed(123)
-x1 <- rnorm(1000, 0, 1)
-x2 <- rnorm(1000, 0, 1)
+
+n_sample <- 100
+
+x1 <- rnorm(n_sample, 0, 1)
+x2 <- rnorm(n_sample, 0, 1)
 x3 <- sample(x = c("site1", "site2", "site3", "site4", "site5"),
              prob = c(.1, .2, .1, .3, .3),
-             size = 100,
+             size = n_sample,
              replace = T)
+x3_num <- as.numeric(factor(x3))
 
+# parameter values
+
+## b = regression coef
+## g = group level errors (i.e., random effects)
 b <- c(0.1, 0.2, 0.3)
+eps <- rnorm(n_distinct(x3_num), mean = 0, sd = 1)
 
+## simulate data
 X <- model.matrix(~ x1 + x2)
-y_hat <- X %*% b
+y_hat <- X %*% b + eps[x3_num]
 y <- rnorm(n = nrow(X), mean = y_hat, sd = 1)
 
-
-data1 <- cbind(x1, x2, x3, y) %>% 
-  data.frame()  
-
-data1$x1 <- as.numeric(as.character(data1$x1))
-data1$x2 <- as.numeric(as.character(data1$x2))
-data1$y <- as.numeric(as.character(data1$y))
+data1 <- data.frame(x1 = x1,
+                    x2 = x2,
+                    x3 = x3,
+                    y = y)
 
 # Generalized linear mixed model 
 lmer(y ~ x1 + x2 + (1 | x3), # random intercept
@@ -38,16 +51,14 @@ lmer(y ~ x1 + x2 + (1 | x3), # random intercept
 ## jags model setup for glmm--------------------------------------------------------------
 
 ## parameters ####
-para <- c("tau",
-          "b0",
+para <- c("b0",
           "b1",
           "b2",
-          "lambda",
-          "sd",
-          "eps")
+          "sd0",
+          "sd1")
 
 ## model file ####
-m3 <- runjags::read.jagsfile("example_model.R")
+m3 <- runjags::read.jagsfile("code/example_model.R")
 
 ## mcmc setup ####
 n_ad <- 1000
@@ -70,7 +81,9 @@ for (j in 1:n_chain) inits[[j]]$.RNG.seed <- (j - 1) * 10 + 1
 d_jags3 <- list(Y = y,
                 X1 = x1,
                 X2 = x2,
-                Nsample = length(y))
+                G = x3_num,
+                Nsample = length(y),
+                Ngroup = n_distinct(x3_num))
 
 ## run jags ####
 post3 <- runjags::run.jags(model = m3$model,
@@ -86,5 +99,5 @@ post3 <- runjags::run.jags(model = m3$model,
                            n.sims = n_chain,
                            module = "glm") #specific to jags doesnt need to be change
 
-mcmc_summary3 <- MCMCvis::MCMCsummary(post3$mcmc)
+(mcmc_summary3 <- MCMCvis::MCMCsummary(post3$mcmc))
 
