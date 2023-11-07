@@ -11,8 +11,8 @@ set.seed(123)
 
 n_sample <- 100
 
-x1 <- rpois(n_sample, 1)
-x2 <- rpois(n_sample, 1)
+x1 <- rnorm(n_sample, 1)
+x2 <- rnorm(n_sample, 1)
 x3 <- sample(x = c("site1", "site2", "site3", "site4", "site5"),
              prob = c(.1, .2, .1, .3, .3),
              size = n_sample,
@@ -28,8 +28,8 @@ eps <- rnorm(n_distinct(x3_num), mean = 0, sd = 1)
 
 ## simulate data
 X <- model.matrix(~ x1 + x2)
-y_hat <- X %*% b + eps[x3_num]
-y <- rnorm(n = nrow(X), mean = y_hat, sd = 1)  
+y_hat <- exp(X %*% b + eps[x3_num])
+y <- rpois(n = nrow(X), lambda = y_hat)  
 
 data1 <- data.frame(x1 = x1,
                     x2 = x2,
@@ -37,8 +37,9 @@ data1 <- data.frame(x1 = x1,
                     y = y)
 
 # Generalized linear mixed model 
-lmer(y ~ x1 + x2 + (1 | x3), # random intercept
-     data = data1) %>% 
+glmer(y ~ x1 + x2 + (1 | x3), # random intercept
+      data = data1,
+      family = "poisson") %>% 
   summary()
 
 # group = random effect term
@@ -54,9 +55,7 @@ lmer(y ~ x1 + x2 + (1 | x3), # random intercept
 para <- c("b0",
           "b1",
           "b2",
-          "sd0",
           "sd1",
-          "lambda",
           "eps")
 
 ## model file ####
