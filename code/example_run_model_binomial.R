@@ -29,7 +29,7 @@ eps <- rnorm(n_distinct(x3_num), mean = 0, sd = 1)
 ## simulate data
 X <- model.matrix(~ x1 + x2)
 y_hat <- X %*% b + eps[x3_num] # cant be more than 1
-y <- rbinom(n = nrow(X), size = 1 , prob = y_hat)  # needs to be positive but how 
+y <- rbinom(n = nrow(X), size = 10 , prob = y_hat)  # needs to be positive but how 
 
 data1 <- data.frame(x1 = x1,
                     x2 = x2,
