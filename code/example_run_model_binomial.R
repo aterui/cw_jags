@@ -2,7 +2,7 @@
 # setup -------------------------------------------------------------------
 
 pacman::p_load(tidyverse,
-               lme4)
+               lme4, stats)
 
 # Poisson GLMM --------------------------------------------------------------------
 
@@ -28,7 +28,8 @@ eps <- rnorm(n_distinct(x3_num), mean = 0, sd = 1)
 
 ## simulate data
 X <- model.matrix(~ x1 + x2)
-y_hat <- X %*% b + eps[x3_num] # cant be more than 1
+y_hat <- logit(X %*% b + eps[x3_num]) # needs to be binary
+y_hat <- 1 / 1 + (exp(-(X %*% b + eps[x3_num])))
 y <- rbinom(n = nrow(X), size = 10 , prob = y_hat)  # needs to be positive but how 
 
 data1 <- data.frame(x1 = x1,
@@ -48,13 +49,11 @@ glmer(y ~ x1 + x2 + (1 | x3), # random intercept
 para <- c("b0",
           "b1",
           "b2",
-          "sd0",
-          "sd1",
-          "lambda",
+          "tau1",
           "eps")
 
 ## model file ####
-m3 <- runjags::read.jagsfile("code/example_model.R")
+m3 <- runjags::read.jagsfile("code/example_model_binomial.R")
 
 ## mcmc setup ####
 n_ad <- 1000
