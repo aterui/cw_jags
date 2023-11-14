@@ -21,7 +21,8 @@ model {
   ## for data-level replicates
   for (i in 1:Nsample) {
     
-    Y[i] ~ dbern(p[i], y[i]) ## need probability term but which is this on run model?
+    Y[i] ~ dbin(p[i], Size)
+    #Y[i] ~ dbern(p[i], y[i]) ## need probability term but which is this on run model?
     logit(p[i]) <- logit.p[i]  #link function
     logit.p[i] <- (b0 + eps[G[i]]) + b1 * X1[i] + b2 * X2[i]     #linear predictor and random effect
   }

@@ -10,6 +10,7 @@ pacman::p_load(tidyverse,
 set.seed(123)
 
 n_sample <- 100
+size <- 10
 
 x1 <- rpois(n_sample, 1)
 x2 <- rbinom(n_sample, 1, prob = 0.5)
@@ -28,17 +29,17 @@ eps <- rnorm(n_distinct(x3_num), mean = 0, sd = 1)
 
 ## simulate data
 X <- model.matrix(~ x1 + x2)
-y_hat <- logit(X %*% b + eps[x3_num]) # needs to be binary
-y_hat <- 1 / 1 + (exp(-(X %*% b + eps[x3_num])))
-y <- rbinom(n = nrow(X), size = 10 , prob = y_hat)  # needs to be positive but how 
+y_hat <- boot::inv.logit(X %*% b + eps[x3_num]) # needs to be binary
+y <- rbinom(n = nrow(X), size = size , prob = y_hat)  # needs to be positive but how 
 
 data1 <- data.frame(x1 = x1,
                     x2 = x2,
                     x3 = x3,
-                    y = y)
+                    y = y,
+                    size = size)
 
 # Generalized linear mixed model 
-glmer(y ~ x1 + x2 + (1 | x3), # random intercept
+glmer(cbind(y, size - y) ~ x1 + x2 + (1 | x3), # random intercept
       data = data1,
       family = "binomial") %>% 
   summary()
@@ -74,6 +75,7 @@ for (j in 1:n_chain) inits[[j]]$.RNG.seed <- (j - 1) * 10 + 1
 ## jags for glmm--------------------------------------------------------------------
 
 d_jags3 <- list(Y = y,
+                Size = size,
                 X1 = x1,
                 X2 = x2,
                 G = x3_num,
