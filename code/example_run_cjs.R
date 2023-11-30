@@ -18,7 +18,7 @@ source("code/function.R")
 ## arguments in cjs_data()
 ## p: detection probability
 ## s: survival probability
-## n0: number of tagging per occasion
+## n0: number of new tagging per occasion
 ## m_occ: number of occasion
 
 obj <- cjs_data()
