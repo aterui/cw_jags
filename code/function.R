@@ -27,6 +27,7 @@ cjs_data <- function(s = 0.9, p = 0.5, n0 = 30, n_occ = 10) {
                                   prob = s)
     m_z[(n_tag + 1):(n_tag + n0), t + 1] <- 1
     
+    ## observation process of imperfect detection
     phi <- rbinom(n = n_tag, size = 1, prob = p) 
     m_y[1:n_tag, t + 1] <- m_z[1:n_tag, t + 1] * phi
     m_y[(n_tag + 1):(n_tag + n0), t + 1] <- 1
