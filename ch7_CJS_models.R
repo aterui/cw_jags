@@ -1,6 +1,9 @@
-# Chapter 7 CJS Models from Bayesian Population Analysis
-# Author: Marc Kery
+# Chapter 7 CJS Models
+# author Mark Kery
 
+library(R2WinBUGS)
+
+# Models with Constant Parameters -----------------------------------------
 
 # Define parameter values
 n.occasions <- 6 # Number of capture occasions 
@@ -885,3 +888,727 @@ cjs.corr <- bugs(bugs.data, inits, parameters, "cjs-temp-corr.bug",
 print(cjs.corr, digits = 3)
 
 corr.coef <- cjs.corr$sims.list$Sigma[,1,2] / sqrt(cjs.corr$sims.list$Sigma[,1,1] * cjs.corr$sims.list$Sigma[,2,2])
+
+
+# Models with Age Effects -------------------------------------------------
+
+# Define parameter values
+n.occasions <- 10 # Number of capture occasions
+marked.j <- rep(200, n.occasions-1) # Annual number of newly marked juveniles
+marked.a <- rep(30, n.occasions-1) # Annual number of newly marked adults
+phi.juv <- 0.3 # Juvenile annual survival
+phi.ad <- 0.65 # Adult annual survival
+p <- rep(0.5, n.occasions-1) # Recapture
+phi.j <- c(phi.juv, rep(phi.ad, n.occasions-2))
+phi.a <- rep(phi.ad, n.occasions-1)
+
+# Define matrices with survival and recapture probabilities
+PHI.J <- matrix(0, ncol = n.occasions-1, nrow = sum(marked.j))
+
+for (i in 1:length(marked.j)){
+  PHI.J[(sum(marked.j[1:i])-marked.j[i]+1):sum(marked.j[1:i]),
+        i:(n.occasions-1)] <- matrix(rep(phi.j[1:(n.occasions-i)],
+                                         marked.j[i]), ncol = n.occasions-i, byrow = TRUE)
+}
+
+P.J <- matrix(rep(p, sum(marked.j)), ncol = n.occasions-1,
+              nrow = sum(marked.j), byrow = TRUE)
+PHI.A <- matrix(rep(phi.a, sum(marked.a)), ncol = n.occasions-1,
+                nrow = sum(marked.a), byrow = TRUE)
+P.A <- matrix(rep(p, sum(marked.a)), ncol = n.occasions-1,
+              nrow = sum(marked.a), byrow = TRUE)
+
+# Apply simulation function
+CH.J <- simul.cjs(PHI.J, P.J, marked.j)
+CH.A <- simul.cjs(PHI.A, P.A, marked.a)
+
+# Create vector with occasion of marking
+get.first <- function(x) min(which(x!=0))
+f.j <- apply(CH.J, 1, get.first)
+f.a <- apply(CH.A, 1, get.first)
+
+# Create matrices X indicating age classes
+x.j <- matrix(NA, ncol = dim(CH.J)[2]-1, nrow = dim(CH.J)[1])
+x.a <- matrix(NA, ncol = dim(CH.A)[2]-1, nrow = dim(CH.A)[1])
+
+for (i in 1:dim(CH.J)[1]){
+  for (t in f.j[i]:(dim(CH.J)[2]-1)){
+    x.j[i,t] <- 2
+    x.j[i,f.j[i]] <- 1
+  } #t
+} #i
+
+for (i in 1:dim(CH.A)[1]){
+  for (t in f.a[i]:(dim(CH.A)[2]-1)){
+    x.a[i,t] <- 2
+  } #t
+} #i
+
+
+CH <- rbind(CH.J, CH.A)
+f <- c(f.j, f.a)
+x <- rbind(x.j, x.a)
+
+# Specify model in BUGS language
+sink("cjs-age.bug")
+cat("
+model {
+
+# Priors and constraints
+for (i in 1:nind){
+for (t in f[i]:(n.occasions−1)){
+phi[i,t] <- beta[x[i,t]]
+p[i,t] <- mean.p
+} #t
+} #i
+
+for (u in 1:2){
+beta[u] ~ dunif(0, 1) # Priors for age-specific survival
+}
+mean.p ~ dunif(0, 1) # Prior for mean recapture
+
+# Likelihood
+for (i in 1:nind){
+
+# Define latent state at first capture
+z[i,f[i]] <- 1
+for (t in (f[i]+1):n.occasions){
+
+# State process
+z[i,t] ~ dbern(mu1[i,t])
+mu1[i,t] <- phi[i,t−1] * z[i,t−1]
+
+# Observation process
+y[i,t] ~ dbern(mu2[i,t])
+mu2[i,t] <- p[i,t−1] * z[i,t]
+} #t
+} #i
+}
+",fill = TRUE)
+sink()
+
+# Bundle data
+bugs.data <- list(y = CH, f = f, nind = dim(CH)[1], n.occasions =
+                    dim(CH)[2], z = known.state.cjs(CH), x = x)
+
+# Initial values
+inits <- function(){list(z = cjs.init.z(CH, f), beta = runif(2, 0, 1),
+                         mean.p = runif(1, 0, 1))}
+
+# Parameters monitored
+parameters <- c("beta", "mean.p")
+
+# MCMC settings
+ni <- 2000
+nt <- 3
+nb <- 1000
+nc <- 3
+
+# Call WinBUGS from R (BRT 3 min)
+cjs.age <- bugs(bugs.data, inits, parameters, "cjs-age.bug", n.chains =
+                  nc, n.thin = nt, n.iter = ni, n.burnin = nb, debug = TRUE,
+                bugs.directory = bugs.dir, working.directory = getwd())
+
+
+## model survival as a linear function of age
+# Create matrix X indicating age classes
+x <- matrix(NA, ncol = dim(CH)[2]-1, nrow = dim(CH)[1])
+for (i in 1:dim(CH)[1]){
+  for (t in f[i]:(dim(CH)[2]-1)){
+    x[i,t] <- t-f[i]+1
+  } #t
+} #i
+
+# Priors and constraints
+for (i in 1:nind){
+  for (t in f[i]:(n.occasions-1)){
+    logit(phi[i,t]) <- mu + beta*x[i,t]
+    p[i,t] <- mean.p
+  } #t
+} #i
+
+mu ~ dnorm(0, 0.01) # Prior for mean of logit survival
+beta ~ dnorm(0, 0.01) # Prior for slope parameter
+
+for (i in 1:(n.occasions-1)){
+  phi.age[i] <- 1 / (1+exp(-mu -beta*i)) # Logit back-transformation
+}
+mean.p ~ dunif(0, 1) # Prior for mean recapture
+
+
+# Estimating for uneven recapture probability -----------------------------
+
+# Import data
+CH <- as.matrix(read.table(file = "trap.txt", sep = " "))
+
+# Compute vector with occasion of first capture
+get.first <- function(x) min(which(x!=0))
+f <- apply(CH, 1, get.first)
+
+# Create matrix m indicating when an individual was captured
+m <- CH[,1:(dim(CH)[2]-1)]
+u <- which(m==0)
+m[u] <- 2
+
+# Specify model in BUGS language
+sink("cjs-trap.bug")
+cat("
+model {
+
+# Priors and constraints
+for (i in 1:nind){
+for (t in f[i]:(n.occasions−1)){
+phi[i,t] <- mean.phi
+p[i,t] <- beta[m[i,t]]
+} #t
+} #i
+mean.phi ~ dunif(0, 1) # Prior for mean survival
+
+for (u in 1:2){
+beta[u] ~ dunif(0, 1) # Priors for recapture
+}
+
+# Likelihood components
+for (i in 1:nind){
+
+# Define latent state at first capture
+z[i,f[i]] <- 1
+for (t in (f[i]+1):n.occasions){
+
+# State process
+z[i,t] ~ dbern(mu1[i,t])
+mu1[i,t] <- phi[i,t−1] * z[i,t−1]
+
+# Observation process
+y[i,t] ~ dbern(mu2[i,t])
+mu2[i,t] <- p[i,t−1] * z[i,t]
+} #t
+} #i
+}
+",fill = TRUE)
+sink()
+
+# Bundle data
+bugs.data <- list(y = CH, f = f, nind = dim(CH)[1], n.occasions =
+                    dim(CH)[2], z = known.state.cjs(CH), m = m)
+
+# Initial values
+inits <- function(){list(z = cjs.init.z(CH, f), mean.phi = runif(1, 0,
+                                                                 1), beta = runif(2, 0, 1))}
+
+# Parameters monitored
+parameters <- c("mean.phi", "beta")
+
+# MCMC settings
+ni <- 20000
+nt <- 3
+nb <- 10000
+nc <- 3
+
+# Call WinBUGS from R (BRT 1 min)
+cjs.trap <- bugs(bugs.data, inits, parameters, "cjs-trap.bug",
+                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, debug = TRUE,
+                 bugs.directory = bugs.dir, working.directory = getwd())
+
+
+# Parameter Identifiability -----------------------------------------------
+
+# Define parameter values
+n.occasions <- 12 # Number of capture occasions
+marked <- rep(30, n.occasions-1) # Annual number of newly markedvindividuals
+phi <- c(0.6, 0.5, 0.55, 0.6, 0.5, 0.4, 0.6, 0.5, 0.55, 0.6, 0.7)
+p <- c(0.4, 0.65, 0.4, 0.45, 0.55, 0.68, 0.66, 0.28, 0.55, 0.45, 0.35)
+
+# Define matrices with survival and recapture probabilities
+PHI <- matrix(phi, ncol = n.occasions-1, nrow = sum(marked), byrow = TRUE)
+P <- matrix(p, ncol = n.occasions-1, nrow = sum(marked), byrow = TRUE)
+
+# Simulate capture-histories
+CH <- simul.cjs(PHI, P, marked)
+
+# Create vector with occasion of marking
+get.first <- function(x) min(which(x!=0))
+f <- apply(CH, 1, get.first)
+
+# Specify model in BUGS language
+sink("cjs-t-t.bug")
+cat("
+model {
+
+# Priors and constraints
+for (i in 1:nind){
+for (t in f[i]:(n.occasions−1)){
+phi[i,t] <- phi.t[t]
+p[i,t] <- p.t[t]
+} #t
+} #i
+
+for (t in 1:(n.occasions−1)){
+phi.t[t] ~ dunif(0, 1) # Priors for time-spec. survival
+p.t[t] ~ dunif(0, 1) # Priors for time-spec. recapture
+}
+
+# Likelihood
+for (i in 1:nind){
+
+# Define latent state at first capture
+z[i,f[i]] <- 1
+for (t in (f[i]+1):n.occasions){
+
+# State process
+z[i,t] ~ dbern(mu1[i,t])
+mu1[i,t] <- phi[i,t−1] * z[i,t−1]
+
+# Observation process
+y[i,t] ~ dbern(mu2[i,t])
+mu2[i,t] <- p[i,t−1] * z[i,t]
+} #t
+} #i
+}
+",fill = TRUE)
+sink()
+# Bundle data
+bugs.data <- list(y = CH, f = f, nind = dim(CH)[1], n.occasions = dim(CH)[2],
+                  z = known.state.cjs(CH))
+
+# Initial values
+inits <- function(){list(z = cjs.init.z(CH, f), phi.t = runif((dim(CH)
+                                                               [2]-1), 0, 1), p.t = runif((dim(CH)[2]-1), 0, 1))}
+
+# Parameters monitored
+parameters <- c("phi.t", "p.t")
+
+# MCMC settings
+ni <- 25000
+nt <- 3
+nb <- 20000
+nc <- 3
+
+# Call WinBUGS from R (BRT 7 min)
+cjs.t.t <- bugs(bugs.data, inits, parameters, "cjs-t-t.bug", n.chains =
+                  nc, n.thin = nt, n.iter = ni, n.burnin = nb, debug = TRUE,
+                bugs.directory = bugs.dir, working.directory = getwd())
+
+# Plot posterior distributions of some phi and p
+par(mfrow = c(2, 2), cex = 1.2, las = 1, mar=c(5, 4, 2, 1))
+plot(density(cjs.t.t$sims.list$phi.t[,6]), xlim = c(0, 1), ylim = c(0, 5),
+     main = "", xlab = expression(phi[6]), ylab = "Density", frame = FALSE,
+     lwd = 2)
+abline(h = 1, lty = 2, lwd = 2)
+par(mar=c(5, 3, 2, 2))
+plot(density(cjs.t.t$sims.list$phi.t[,11]), xlim = c(0, 1),
+     ylim =c(0, 5), main = "", xlab = expression(phi[11]), ylab ="",
+     frame = FALSE, lwd = 2)
+abline(h = 1, lty = 2, lwd = 2)
+par(mar=c(5, 4, 2, 1))
+plot(density(cjs.t.t$sims.list$p.t[,6]), xlim = c(0, 1), ylim = c(0, 5),
+     main = "", xlab = expression(p[6]), ylab = "Density", frame = FALSE,
+     lwd = 2)
+abline(h = 1, lty = 2, lwd = 2)
+par(mar=c(5, 3, 2, 2))
+plot(density(cjs.t.t$sims.list$p.t[,11]), xlim = c(0, 1), ylim =
+       c(0, 5), main = "", xlab = expression(p[11]), ylab ="", frame = FALSE,
+     lwd = 2)
+abline(h = 1, lty = 2, lwd = 2)
+
+
+# Multinomial Likelihood --------------------------------------------------
+
+# Function to create a m-array based on capture-histories (CH)
+marray <- function(CH){
+  nind <- dim(CH)[1]
+  n.occasions <- dim(CH)[2]
+  m.array <- matrix(data = 0, ncol = n.occasions+1, nrow =
+                      n.occasions)
+  
+  # Calculate the number of released individuals at each time period
+  for (t in 1:n.occasions){
+    m.array[t,1] <- sum(CH[,t])
+  }
+  
+  for (i in 1:nind){
+    pos <- which(CH[i,]!=0)
+    g <- length(pos)
+    
+    for (z in 1:(g-1)){
+      m.array[pos[z],pos[z+1]] <- m.array[pos[z],pos[z+1]] + 1
+    } #z
+  } #i
+  
+  # Calculate the number of individuals that is never recaptured
+  for (t in 1:n.occasions){
+    m.array[t,n.occasions+1] <- m.array[t,1] -
+      sum(m.array[t,2:n.occasions])
+  }
+  
+  out <- m.array[1:(n.occasions-1),2:(n.occasions+1)]
+  return(out)
+}
+
+
+# Time Dependent Models ---------------------------------------------------
+
+# Specify model in BUGS language
+sink("cjs-mnl.bug")
+cat("
+model {
+
+# Priors and constraints
+for (t in 1:(n.occasions−1)){
+phi[t] ~ dunif(0, 1) # Priors for survival
+p[t] ~ dunif(0, 1) # Priors for recapture
+}
+
+# Define the multinomial likelihood
+for (t in 1:(n.occasions−1)){
+marr[t,1:n.occasions] ~ dmulti(pr[t, ], r[t])
+}
+
+# Calculate the number of birds released each year
+for (t in 1:(n.occasions−1)){
+r[t] <- sum(marr[t, ])
+}
+
+# Define the cell probabilities of the m-array
+
+# Main diagonal
+for (t in 1:(n.occasions−1)){
+q[t] <- 1−p[t] # Probability of non-recapture
+pr[t,t] <- phi[t]*p[t]
+
+# Above main diagonal
+for (j in (t+1):(n.occasions−1)){
+pr[t,j] <- prod(phi[t:j])*prod(q[t:(j−1)])*p[j]
+} #j
+
+# Below main diagonal
+for (j in 1:(t−1)){
+pr[t,j] <- 0
+} #j
+} #t
+
+# Last column: probability of non-recapture
+for (t in 1:(n.occasions−1)){
+pr[t,n.occasions] <- 1−sum(pr[t,1:(n.occasions−1)])
+} #t
+
+# Assess model fit using Freeman-Tukey statistic
+# Compute fit statistics for observed data
+for (t in 1:(n.occasions−1)){
+for (j in 1:n.occasions){
+expmarr[t,j] <- r[t]*pr[t,j]
+E.org[t,j] <- pow((pow(marr[t,j], 0.5)−pow(expmarr[t,j],
+0.5)), 2)
+} #j
+} #t
+
+# Generate replicate data and compute fit stats from them
+for (t in 1:(n.occasions−1)){
+marr.new[t,1:n.occasions] ~ dmulti(pr[t, ], r[t])
+for (j in 1:n.occasions){
+E.new[t,j] <- pow((pow(marr.new[t,j], 0.5)-pow(expmarr[t,j],
+0.5)), 2)
+} #j
+} #t
+
+fit <- sum(E.org[,])
+fit.new <- sum(E.new[,])
+}
+",fill = TRUE)
+sink()
+
+# Create the m-array from the capture-histories
+marr <- marray(CH)
+
+# Bundle data
+bugs.data <- list(marr = marr, n.occasions = dim(marr)[2])
+
+# Initial values
+inits <- function(){list(phi = runif(dim(marr)[2]-1, 0, 1),
+                         p = runif(dim(marr)[2]-1, 0, 1))}
+
+# Parameters monitored
+parameters <- c("phi", "p", "fit", "fit.new")
+
+# MCMC settings
+ni <- 10000
+nt <- 3
+nb <- 5000
+nc <- 3
+
+# Call WinBUGS from R (BRT 1 min)
+cjs <- bugs(bugs.data, inits, parameters, "cjs-mnl.bug", n.chains =
+              nc, n.thin = nt, n.iter = ni, n.burnin = nb, debug = TRUE,
+            bugs.directory = bugs.dir, working.directory = getwd())
+print(cjs, digits = 3)
+
+# Evaluation of fit
+plot(cjs$sims.list$fit, cjs$sims.list$fit.new, xlab = "Discrepancy
+actual data", ylab = "Discrepancy replicate data", las = 1,
+     ylim = c(5, 25), xlim = c(5, 25), bty ="n")
+abline(0, 1, col = "black", lwd = 2)
+mean(cjs$sims.list$fit.new > cjs$sims.list$fit)
+
+
+# Age Dependent Models ----------------------------------------------------
+
+# Define parameter values
+n.occasions <- 12 # Number of capture occasions
+marked.j <- rep(200, n.occasions-1) # Annual number of newly marked
+juveniles
+marked.a <- rep(30, n.occasions-1) # Annual number of newly marked adults
+phi.juv <- 0.3 # Juvenile annual survival
+phi.ad <- 0.65 # Adult annual survival
+p <- rep(0.5, n.occasions-1) # Recapture
+phi.j <- c(phi.juv, rep(phi.ad,n.occasions-2))
+phi.a <- rep(phi.ad, n.occasions-1)
+
+# Define matrices with survival and recapture probabilities
+PHI.J <- matrix(0, ncol = n.occasions-1, nrow = sum(marked.j))
+
+for (i in 1:(length(marked.j)-1)){
+  PHI.J[(sum(marked.j[1:i])-
+           marked.j[i]+1):sum(marked.j[1:i]),i:(n.occasions-1)] <-
+    matrix(rep(phi.j[1:(n.occasions-i)], marked.j[i]),
+           ncol = n.occasions-i, byrow = TRUE)
+}
+P.J <- matrix(rep(p, n.occasions*sum(marked.j)), ncol =
+                n.occasions-1, nrow = sum(marked.j), byrow = TRUE)
+PHI.A <- matrix(rep(phi.a, sum(marked.a)), ncol = n.occasions-1,
+                nrow = sum(marked.a), byrow = TRUE)
+P.A <- matrix(rep(p, sum(marked.a)), ncol = n.occasions-1,
+              nrow = sum(marked.a), byrow = TRUE)
+
+# Apply simulation function
+CH.J <- simul.cjs(PHI.J, P.J, marked.j)
+CH.A <- simul.cjs(PHI.A, P.A, marked.a)
+
+cap <- apply(CH.J, 1, sum)
+ind <- which(cap >= 2)
+CH.J.R <- CH.J[ind,] # Juvenile CH recaptured at least once
+CH.J.N <- CH.J[-ind,] # Juvenile CH never recaptured
+
+# Remove first capture
+first <- numeric()
+for (i in 1:dim(CH.J.R)[1]){
+  first[i] <- min(which(CH.J.R[i,]==1))
+}
+
+CH.J.R1 <- CH.J.R
+for (i in 1:dim(CH.J.R)[1]){
+  CH.J.R1[i,first[i]] <- 0
+}
+
+# Add grown-up juveniles to adults and create m-array
+CH.A.m <- rbind(CH.A, CH.J.R1)
+CH.A.marray <- marray(CH.A.m)
+
+# Create CH matrix for juveniles, ignoring subsequent recaptures
+second <- numeric()
+for (i in 1:dim(CH.J.R1)[1]){
+  second[i] <- min(which(CH.J.R1[i,]==1))
+}
+
+CH.J.R2 <- matrix(0, nrow = dim(CH.J.R)[1], ncol = dim(CH.J.R)[2])
+for (i in 1:dim(CH.J.R)[1]){
+  CH.J.R2[i,first[i]] <- 1
+  CH.J.R2[i,second[i]] <- 1
+}
+
+# Create m-array for these
+CH.J.R.marray <- marray(CH.J.R2)
+
+# The last column ought to show the number of juveniles not recaptured
+# again and should all be zeros, since all of them are released as adults
+CH.J.R.marray[,dim(CH.J)[2]] <- 0
+
+# Create the m-array for juveniles never recaptured and add it to the previous m-array
+CH.J.N.marray <- marray(CH.J.N)
+CH.J.marray <- CH.J.R.marray + CH.J.N.marray
+
+# Specify model in BUGS language
+sink("cjs-mnl-age.bug")
+cat("
+model {
+
+# Priors and constraints
+for (t in 1:(n.occasions−1)){
+phi.juv[t] <- mean.phijuv
+phi.ad[t] <- mean.phiad
+p[t] <- mean.p
+}
+mean.phijuv ~ dunif(0, 1) # Prior for mean juv. survival
+mean.phiad ~ dunif(0, 1) # Prior for mean ad. survival
+mean.p ~ dunif(0, 1) # Prior for mean recapture
+
+# Define the multinomial likelihood
+for (t in 1:(n.occasions−1)){
+marr.j[t,1:n.occasions] ~ dmulti(pr.j[t,], r.j[t])
+marr.a[t,1:n.occasions] ~ dmulti(pr.a[t,], r.a[t])
+}
+
+# Calculate the number of birds released each year
+for (t in 1:(n.occasions−1)){
+r.j[t] <- sum(marr.j[t,])
+r.a[t] <- sum(marr.a[t,])
+}
+
+# Define the cell probabilities of the m-arrays
+# Main diagonal
+for (t in 1:(n.occasions−1)){
+q[t] <- 1−p[t] # Probability of non-recapture
+pr.j[t,t] <- phi.juv[t]*p[t]
+pr.a[t,t] <- phi.ad[t]*p[t]
+
+# Above main diagonal
+for (j in (t+1):(n.occasions−1)){
+pr.j[t,j] <- phi.juv[t]*prod(phi.ad[(t+1):j])*prod(q[t:
+(j−1)])*p[j]
+pr.a[t,j] <- prod(phi.ad[t:j])*prod(q[t:(j−1)])*p[j]
+} #j
+
+# Below main diagonal
+for (j in 1:(t−1)){
+pr.j[t,j] <- 0
+pr.a[t,j] <- 0
+} #j
+} #t
+
+# Last column: probability of non-recapture
+for (t in 1:(n.occasions−1)){
+pr.j[t,n.occasions] <- 1−sum(pr.j[t,1:(n.occasions−1)])
+pr.a[t,n.occasions] <- 1−sum(pr.a[t,1:(n.occasions−1)])
+} #t
+}
+",fill = TRUE)
+sink()
+
+# Bundle data
+bugs.data <- list(marr.j = CH.J.marray, marr.a = CH.A.marray,
+                  n.occasions = dim(CH.J.marray)[2])
+
+# Initial values
+inits <- function(){list(mean.phijuv = runif(1, 0, 1), mean.phiad =
+                           runif(1, 0, 1), mean.p = runif(1, 0, 1))}
+
+# Parameters monitored
+parameters <- c("mean.phijuv", "mean.phiad", "mean.p")
+
+# MCMC settings
+ni <- 3000
+nt <- 3
+nb <- 1000
+nc <- 3
+
+# Call WinBUGS from R (BRT <1 min)
+cjs.2 <- bugs(bugs.data, inits, parameters, "cjs-mnl-age.bug",
+              n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, debug = TRUE,
+              bugs.directory = bugs.dir, working.directory = getwd())
+
+
+
+# Example: estimate mean survival with temporal variance ------------------
+
+# Specify model in BUGS language
+sink("cjs-mnl-ran.bug")
+cat("
+model {
+
+# Priors and constraints
+for (t in 1:(n.occasions−1)){
+logit(phi[t]) <- mu + epsilon[t]
+epsilon[t] ~ dnorm(0, tau)
+p[t] <- mean.p
+}
+
+mean.phi ~ dunif(0, 1) # Prior for mean survival
+mu <- log(mean.phi / (1−mean.phi)) # Logit transformation
+sigma ~ dunif(0, 5) # Prior for standard deviation
+tau <- pow(sigma, −2)
+sigma2 <- pow(sigma, 2)
+
+# Temporal variance on real scale
+sigma2.real <- sigma2 * pow(mean.phi, 2) * pow((1−mean.phi), 2)
+mean.p ~ dunif(0, 1) # Prior for mean recapture
+
+# Define the multinomial likelihood
+for (t in 1:(n.occasions−1)){
+marr[t,1:n.occasions] ~ dmulti(pr[t,], r[t])
+}
+
+# Calculate the number of birds released each year
+for (t in 1:(n.occasions−1)){
+r[t] <- sum(marr[t,])
+}
+
+# Define the cell probabilities of the m-array:
+# Main diagonal
+for (t in 1:(n.occasions−1)){
+q[t] <- 1−p[t]
+pr[t,t] <- phi[t]*p[t]
+
+# Above main diagonal
+for (j in (t+1):(n.occasions−1)){
+pr[t,j] <- prod(phi[t:j])*prod(q[t:(j−1)])*p[j]
+} #j
+
+# Below main diagonal
+for (j in 1:(t−1)){
+pr[t,j]<-0
+} #j
+} #t
+
+# Last column: probability of non-recapture
+for (t in 1:(n.occasions−1)){
+pr[t,n.occasions] <- 1−sum(pr[t,1:(n.occasions−1)])
+}#t
+
+# Assess model fit using Freeman-Tukey statistic
+# Compute fit statistics for observed data
+for (t in 1:(n.occasions−1)){
+for (j in 1:n.occasions){
+expmarr[t,j] <- r[t]*pr[t,j]
+E.org[t,j] <- pow((pow(marr[t,j], 0.5)−pow(expmarr[t,j],
+0.5)), 2)
+}
+}
+
+# Generate replicate data and compute fit stats from them
+for (t in 1:(n.occasions−1)){
+marr.new[t,1:n.occasions] ~ dmulti(pr[t,], r[t])
+
+for (j in 1:n.occasions){
+E.new[t,j] <- pow((pow(marr.new[t,j], 0.5)-pow(expmarr[t,j],
+0.5)), 2)
+}
+}
+
+fit <- sum(E.org[,])
+fit.new <- sum(E.new[,])
+}
+",fill = TRUE)
+sink()
+
+# Bundle data
+bugs.data <- list(marr = m.leisleri, n.occasions = dim(m.leisleri)[2])
+
+# Initial values
+inits <- function(){list(mean.phi = runif(1, 0, 1), sigma = runif(1, 0,
+                                                                  5), mean.p = runif(1, 0, 1))}
+
+# Parameters monitored
+parameters <- c("phi", "mean.p", "mean.phi", "sigma2", "sigma2.real",
+                "fit", "fit.new")
+
+# MCMC settings
+ni <- 5000
+nt <- 3
+nb <- 1000
+nc <- 3
+
+# Call WinBUGS from R (BRT 3 min)
+leis.result <- bugs(bugs.data, inits, parameters, "cjs-mnl-ran.bug",
+                    n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, debug = TRUE,
+                    bugs.directory = bugs.dir, working.directory = getwd())
+# Summarize posteriors
+print(leis.result, digits = 3)
