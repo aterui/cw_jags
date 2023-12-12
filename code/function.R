@@ -1,16 +1,14 @@
 
 # simulation function for cjs model ---------------------------------------
-## p: detection probability
 ## s: survival probability
+## p: detection probability
 ## n0: number of tagging per occasion
 ## m_occ: number of occasion
 
 cjs_data <- function(s = 0.9, p = 0.5, n0 = 30, n_occ = 10) {
   
-  # m_z: matrix of true survival state
-  # m_y: matrix of observed "(re)capture" state
-  m_z <- matrix(NA, nrow = n0 * n_occ, ncol = n_occ)
-  m_y <- matrix(NA, nrow = n0 * n_occ, ncol = n_occ)
+  m_z <- matrix(NA, nrow = n0 * n_occ, ncol = n_occ)  # m_z: matrix of true survival state
+  m_y <- matrix(NA, nrow = n0 * n_occ, ncol = n_occ)  # m_y: matrix of observed "(re)capture" state
   
   ## initial tag condition
   m_z[1:n0, 1] <- 1

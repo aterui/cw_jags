@@ -279,7 +279,7 @@ abline(v = var.phi, col = "red", lwd = 2)
 
 # Define parameter values
 n.occasions <- 20 # Number of capture occasions
-marked <- rep(15, n.occasions−1) # Annual number of newly marked
+marked <- rep(15, n.occasions-1) # Annual number of newly marked
 individuals
 mean.phi <- 0.65
 p <- rep(0.4, n.occasions-1)
@@ -604,26 +604,98 @@ hist(cjs.ind$sims.list$sigma2, nclass = 15, col = "gray", main = "",
      xlab = expression(sigma^2), ylab = "Frequency", xlim = c(0, 3))
 abline(v = v.ind, col = "red", lwd = 2)
 
-## Estimate survival as a function of an individual covariate x
+
+# Individual random effect ------------------------------------------------
+
+# Define parameter values
+n.occasions <- 20 # Number of capture occasions
+marked <- rep(30, n.occasions-1) # Annual number of newly marked
+individuals
+mean.phi <- 0.65
+p <- rep(0.4, n.occasions-1)
+v.ind <- 0.5
+# Draw annual survival probabilities
+logit.phi <- rnorm(sum(marked), qlogis(mean.phi), v.ind^0.5)
+phi <- plogis(logit.phi)
+# Define matrices with survival and recapture probabilities
+PHI <- matrix(phi, ncol = n.occasions-1, nrow = sum(marked),
+              byrow = FALSE)
+P <- matrix(p, ncol = n.occasions-1, nrow = sum(marked))
+
+
+# Simulate capture-histories
+CH <- simul.cjs(PHI, P, marked)
+
+# Create vector with occasion of marking
+get.first <- function(x) min(which(x!=0))
+f <- apply(CH, 1, get.first)
+
+# Specify model in BUGS language
+sink("cjs-ind-raneff.bug")
+cat("
+
+model {
+
 # Priors and constraints
 for (i in 1:nind){
-  for (t in f[i]:(n.occasions-1)){
-    logit(phi[i,t]) <- mu + beta*x[i] + epsilon[i]
-    p[i,t] <- mean.p
-  } #t
+for (t in f[i]:(n.occasions−1)){
+logit(phi[i,t]) <- mu + epsilon[i]
+p[i,t] <- mean.p
+} #t
 } #i
-
 for (i in 1:nind){
-  epsilon[i] ~ dnorm(0, tau)
+epsilon[i] ~ dnorm(0, tau)
 }
 
 mean.phi ~ dunif(0, 1) # Prior for mean survival
 mu <- log(mean.phi / (1-mean.phi)) # Logit transformation
-beta ~ dnorm(0, 0.001) # Prior for covariate slope
 sigma ~ dunif(0, 5) # Prior for standard deviation
-tau <- pow(sigma, -2)
+tau <- pow(sigma, −2)
 sigma2 <- pow(sigma, 2)
 mean.p ~ dunif(0, 1) # Prior for mean recapture
+
+# Likelihood
+for (i in 1:nind){
+
+# Define latent state at first capture
+z[i,f[i]] <- 1
+for (t in (f[i]+1):n.occasions){
+
+# State process
+z[i,t] ~ dbern(mu1[i,t])
+mu1[i,t] <- phi[i,t-1] * z[i,t-1]
+
+# Observation process
+y[i,t] ~ dbern(mu2[i,t])
+mu2[i,t] <- p[i,t−1] * z[i,t]
+} #t
+} #i
+}
+
+",fill = TRUE)
+sink()
+
+# Bundle data
+bugs.data <- list(y = CH, f = f, nind = dim(CH)[1], n.occasions = dim(CH)[2],
+                  z = known.state.cjs(CH))
+# Initial values
+inits <- function(){list(z = cjs.init.z(CH, f), mean.phi = runif(1, 0, 1),
+                         mean.p = runif(1, 0, 1), sigma = runif(1, 0, 2))}
+
+# Parameters monitored
+parameters <- c("mean.phi", "mean.p", "sigma2")
+# MCMC settings
+ni <- 50000
+nt <- 6
+nb <- 20000
+nc <- 3
+# Call WinBUGS from R (BRT 73 min)
+cjs.ind <- bugs(bugs.data, inits, parameters, "cjs-ind-raneff.bug",
+                n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, debug = TRUE,
+                bugs.directory = bugs.dir, working.directory = getwd())
+
+# Summarize posteriors
+print(cjs.ind, digits = 3)
 
 
 # Fixed Group and Time effects --------------------------------------------

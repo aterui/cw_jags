@@ -22,7 +22,7 @@ get_first <- function(x) min(which(!is.na(x)))
 ## n0: number of new tagging per occasion
 ## m_occ: number of occasion
 
-obj <- cjs_data(s = 0.6, p = 0.7)
+obj <- cjs_data
 
 Y <- obj$Y
 Nind <- nrow(Y)
@@ -39,7 +39,7 @@ para <- c("mean.phi", "mean.p")
 # mcmc setup --------------------------------------------------------------
 
 ## model file ####
-mcjs <- runjags::read.jagsfile("code/model_cjs.R")
+mcjs <- runjags::read.jagsfile("code/example_model_cjs.R")
 
 ## mcmc setup ####
 n_ad <- 1000
