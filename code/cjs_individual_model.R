@@ -5,6 +5,8 @@ model {
   # Priors and constraints
   for (i in 1:Nind){
     for (t in Fc[i]:(Nocc - 1)){
+      # logit(phi[i,t]) <- logit_phi[t]
+      # logit_phi[t] ~ dnorm(mu, tau)
       logit(phi[i,t]) <- mu + epsilon[t]
       p[i,t] <- mean.p
     } #t
@@ -26,7 +28,7 @@ model {
   for (i in 1:Nind){
     
     # Define latent state at first capture
-    z[i,f[i]] <- 1
+    z[i,Fc[i]] <- 1
     
     for (t in (Fc[i]+1):Nocc){
       
