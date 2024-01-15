@@ -1,5 +1,3 @@
-# real CJS constant parameters
-
 model {
   
   # prior -------------------------------------------------------------------
@@ -10,11 +8,11 @@ model {
       p[i,t] <- mean.p
     } #t
   } #i
-  
+
   mean.phi ~ dunif(0, 1) # Prior for mean survival
   mean.p ~ dunif(0, 1) # Prior for mean recapture
   
-  
+
   # likelihood --------------------------------------------------------------
   
   for (i in 1:Nind){
